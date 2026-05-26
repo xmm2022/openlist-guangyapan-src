@@ -1,165 +1,143 @@
-<div align="center">
-  <img src="https://raw.githubusercontent.com/OpenListTeam/Logo/main/logo.svg" width="128" height="128" alt="logo" />
+# OpenList GuangYaPan 二开版
 
-  <p><em>OpenList is a resilient, long-term governance, community-driven fork of AList — built to defend open source against trust-based attacks.</em></p>
+这是基于 OpenList 二开的光鸭云盘测试版本，目标是让 OpenList 可以挂载 GuangYaPan，并向 Emby 等播放器提供可播放的文件链接。
 
-  <img src="https://goreportcard.com/badge/github.com/OpenListTeam/OpenList/v3" alt="latest version" />
-  <a href="https://github.com/OpenListTeam/OpenList/blob/main/LICENSE"><img src="https://img.shields.io/github/license/OpenListTeam/OpenList" alt="License" /></a>
-  <a href="https://github.com/OpenListTeam/OpenList/actions?query=workflow%3ABuild"><img src="https://img.shields.io/github/actions/workflow/status/OpenListTeam/OpenList/build.yml?branch=main" alt="Build status" /></a>
-  <a href="https://github.com/OpenListTeam/OpenList/releases"><img src="https://img.shields.io/github/release/OpenListTeam/OpenList" alt="latest version" /></a>
+当前源码仓库位置：
 
-  <a href="https://github.com/OpenListTeam/OpenList/discussions"><img src="https://img.shields.io/github/discussions/OpenListTeam/OpenList?color=%23ED8936" alt="discussions" /></a>
-  <a href="https://github.com/OpenListTeam/OpenList/releases"><img src="https://img.shields.io/github/downloads/OpenListTeam/OpenList/total?color=%239F7AEA&logo=github" alt="Downloads" /></a>
-</div>
+```bash
+/root/openlist-guangyapan-src
+```
 
----
+当前测试实例使用端口 `5247`。用户原有的 OpenList `5246` 实例未纳入本仓库管理，也不应被本项目的测试命令影响。
 
-- English | [中文](./README_cn.md) | [日本語](./README_ja.md) | [Dutch](./README_nl.md)
+## 已完成能力
 
-- [Contributing](./CONTRIBUTING.md)
-- [CODE OF CONDUCT](./CODE_OF_CONDUCT.md)
-- [LICENSE](./LICENSE)
+- 新增 `GuangYaPan` 驱动并注册到 OpenList。
+- 支持目录列表，修复光鸭目录被识别成文件的问题。
+- 支持获取文件播放/下载链接，可用于 Emby 拉取播放地址。
+- 支持新建文件夹。
+- 支持删除文件或文件夹。
+- 支持移动文件或文件夹。
+- 支持复制文件或文件夹。
+- 支持重命名文件或文件夹。
+- 支持上传文件：
+  - 计算文件 MD5。
+  - 调用光鸭秒传检查接口。
+  - 获取光鸭资源中心 OSS 临时凭证。
+  - 通过 Aliyun OSS SDK 上传文件。
 
-## Disclaimer
+## 关键文件
 
-OpenList is an open-source project independently maintained by the OpenList Team, following the AGPL-3.0 license and committed to maintaining complete code openness and modification transparency.
+```text
+drivers/all.go
+drivers/guangyapan/api.go
+drivers/guangyapan/driver.go
+drivers/guangyapan/driver_test.go
+drivers/guangyapan/meta.go
+drivers/guangyapan/types.go
+drivers/guangyapan/upload.go
+```
 
-We have noticed the emergence of some third-party projects in the community with names similar to this project, such as OpenListApp/OpenListApp, as well as some paid proprietary software using the same or similar naming. To avoid user confusion, we hereby declare:
+## 驱动配置
 
-- OpenList has no official association with any third-party derivative projects.
+在 OpenList 管理后台添加存储时，驱动选择：
 
-- All software, code, and services of this project are maintained by the OpenList Team and are freely available on GitHub.
+```text
+GuangYaPan
+```
 
-- Project documentation and API services primarily rely on charitable resources provided by Cloudflare. There are currently no paid plans or commercial deployments, and the use of existing features does not involve any costs.
+需要填写的主要字段：
 
-We respect the community's rights to free use and derivative development, but we also strongly urge downstream projects:
+```text
+access_token
+refresh_token
+client_id
+device_id
+page_size
+order_by
+sort_type
+```
 
-- Should not use the "OpenList" name for impersonation promotion or commercial gain;
+`client_id` 默认值为：
 
-- Must not distribute OpenList-based code in a closed-source manner or violate AGPL license terms.
+```text
+aMe-8VSlkrbQXpUR
+```
 
-To better maintain healthy ecosystem development, we recommend:
+`root_folder_id` 可留空，表示光鸭根目录。
 
-- Clearly indicate the project source and choose appropriate open-source licenses in accordance with the open-source spirit;
+## 本地验证
 
-- If involving commercial use, please avoid using "OpenList" or any confusing naming as the project name;
+运行 GuangYaPan 驱动单元测试：
 
-- If you need to use materials located under OpenListTeam/Logo, you may modify and use them under compliance with the agreement.
+```bash
+cd /root/openlist-guangyapan-src
+/root/.local/go/bin/go test -count=1 ./drivers/guangyapan
+```
 
-Thank you for your support and understanding of the OpenList project.
+构建二进制：
 
-## Features
+```bash
+cd /root/openlist-guangyapan-src
+/root/.local/go/bin/go build -tags=jsoniter -o openlist-guangyapan .
+```
 
-- [x] Multiple storages
-  - [x] Local storage
-  - [x] [Aliyundrive](https://www.alipan.com)
-  - [x] OneDrive / Sharepoint ([Global](https://www.microsoft.com/en-us/microsoft-365/onedrive/online-cloud-storage), [CN](https://portal.partner.microsoftonline.cn), DE, US)
-  - [x] [189cloud](https://cloud.189.cn) (Personal, Family)
-  - [x] [GoogleDrive](https://drive.google.com)
-  - [x] [123pan](https://www.123pan.com)
-  - [x] [FTP / SFTP](https://en.wikipedia.org/wiki/File_Transfer_Protocol)
-  - [x] [PikPak](https://www.mypikpak.com)
-  - [x] [S3](https://aws.amazon.com/s3)
-  - [x] [Seafile](https://seafile.com)
-  - [x] [UPYUN Storage Service](https://www.upyun.com/products/file-storage)
-  - [x] [WebDAV](https://en.wikipedia.org/wiki/WebDAV)
-  - [x] Teambition([China](https://www.teambition.com), [International](https://us.teambition.com))
-  - [x] [MediaFire](https://www.mediafire.com)
-  - [x] [Mediatrack](https://www.mediatrack.cn)
-  - [x] [ProtonDrive](https://proton.me/drive)
-  - [x] [139yun](https://yun.139.com) (Personal, Family, Group)
-  - [x] [YandexDisk](https://disk.yandex.com)
-  - [x] [BaiduNetdisk](http://pan.baidu.com)
-  - [x] [Terabox](https://www.terabox.com/main)
-  - [x] [UC](https://drive.uc.cn)
-  - [x] [Quark](https://pan.quark.cn)
-  - [x] [Thunder](https://pan.xunlei.com)
-  - [x] [Lanzou](https://www.lanzou.com)
-  - [x] [ILanzou](https://www.ilanzou.com)
-  - [x] [Google photo](https://photos.google.com)
-  - [x] [Mega.nz](https://mega.nz)
-  - [x] [Baidu photo](https://photo.baidu.com)
-  - [x] [SMB](https://en.wikipedia.org/wiki/Server_Message_Block)
-  - [x] [115](https://115.com)
-  - [X] [Cloudreve](https://cloudreve.org)
-  - [x] [Dropbox](https://www.dropbox.com)
-  - [x] [FeijiPan](https://www.feijipan.com)
-  - [x] [dogecloud](https://www.dogecloud.com/product/oss)
-  - [x] [Azure Blob Storage](https://azure.microsoft.com/products/storage/blobs)
-  - [x] [Chaoxing](https://www.chaoxing.com)
-  - [x] [CNB](https://cnb.cool/)
-  - [x] [Degoo](https://degoo.com)
-  - [x] [Doubao](https://www.doubao.com)
-  - [x] [Febbox](https://www.febbox.com)
-  - [x] [GitHub](https://github.com)
-  - [x] [OpenList](https://github.com/OpenListTeam/OpenList)
-  - [x] [Teldrive](https://github.com/tgdrive/teldrive)
-  - [x] [Weiyun](https://www.weiyun.com)
-- [x] Easy to deploy and out-of-the-box
-- [x] File preview (PDF, markdown, code, plain text, ...)
-- [x] Image preview in gallery mode
-- [x] Video and audio preview, support lyrics and subtitles
-- [x] Office documents preview (docx, pptx, xlsx, ...)
-- [x] `README.md` preview rendering
-- [x] File permalink copy and direct file download
-- [x] Dark mode
-- [x] I18n
-- [x] Protected routes (password protection and authentication)
-- [x] WebDAV
-- [x] Docker Deploy
-- [x] Cloudflare Workers proxy
-- [x] File/Folder package download
-- [x] Web upload(Can allow visitors to upload), delete, mkdir, rename, move and copy
-- [x] Offline download
-- [x] Copy files between two storage
-- [x] Multi-thread downloading acceleration for single-thread download/stream
+## 5247 测试实例
 
-## Document
+当前测试服务名：
 
-- 📘 [Docs](https://doc.oplist.org)
-- 🌏 [CN Mirror](https://doc.oplist.org.cn)
-- ⚖️ [Terms of Use](https://doc.oplist.org/terms)
-- 🔒 [Privacy Policy](https://doc.oplist.org/privacy)
+```bash
+openlist-guangyapan-test.service
+```
 
-## Demo
+测试数据目录：
 
-- 🌎 [Global Demo](https://demo.oplist.org)
-- 🇨🇳 [CN Demo](https://demo.oplist.org.cn)
+```bash
+/root/openlist-guangyapan-test-data
+```
 
-## Discussion
+启动方式示例：
 
-Please refer to [*Discussions*](https://github.com/OpenListTeam/OpenList/discussions) for raising general questions, ***Issues* is for bug reports and feature requests only.**
+```bash
+systemd-run \
+  --unit=openlist-guangyapan-test \
+  --description='OpenList GuangYaPan test instance' \
+  --property=WorkingDirectory=/root/openlist-guangyapan-src \
+  --property=Restart=on-failure \
+  --property=RestartSec=3 \
+  --property=StandardOutput=append:/root/openlist-guangyapan-test-data/server.log \
+  --property=StandardError=append:/root/openlist-guangyapan-test-data/server.log \
+  /root/openlist-guangyapan-src/openlist-guangyapan server \
+  --data /root/openlist-guangyapan-test-data \
+  --log-std
+```
 
-## Sponsor
+检查 5247 是否正常监听：
 
-[![VPS.Town](https://vps.town/static/images/sponsor.png)](https://vps.town "VPS.Town - Trust, Effortlessly. Your Cloud, Reimagined.")
+```bash
+ss -ltnp | rg '(:5246|:5247)'
+```
 
-## License
+预期结果中应同时看到：
 
-The `OpenList` is open-source software licensed under the [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.txt) license.
+```text
+:5247  openlist-guangyapan
+:5246  openlist
+```
 
-## Disclaimer
+其中 `5246` 是用户原有实例，不属于本项目测试实例。
 
-- This project is a free and open-source software designed to facilitate file sharing via net disks, primarily intended to support the downloading and learning of the Go programming language.
-- Please comply with all applicable laws and regulations when using this software. Any form of misuse is strictly prohibited.
-- The software is based on official SDKs or APIs without any modification, disruption, or interference with their behavior.
-- It only performs HTTP 302 redirects or traffic forwarding, and does not intercept, store, or tamper with any user data.
-- This project is not affiliated with any official platform or service provider.
-- The software is provided "as is", without any warranties of any kind, either express or implied, including but not limited to warranties of merchantability or fitness for a particular purpose.
-- The maintainers are not liable for any direct or indirect damages arising from the use of, or inability to use, this software.
-- You are solely responsible for any risks associated with using this software, including but not limited to account bans or download speed limitations.
-- This project is licensed under the [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.txt) License. Please see the [LICENSE](./LICENSE) file for details.
+## 注意事项
 
-## Contact Us
+- 本仓库是 OpenList 的 GuangYaPan 二开测试源码，不是官方 OpenList 发布版。
+- 操作真实网盘文件前，建议先用测试目录和小文件验证移动、复制、重命名、删除、上传。
+- 不要把构建产物 `openlist-guangyapan`、`.prev` 备份文件、运行数据目录提交进 git。
+- GuangYaPan 接口字段可能会变化，如遇到写操作失败，优先检查 `drivers/guangyapan/api.go` 和 `drivers/guangyapan/upload.go` 中的接口路径与请求体。
 
-- [@GitHub](https://github.com/OpenListTeam)
-- [Telegram Group](https://t.me/OpenListTeam)
-- [Telegram Channel](https://t.me/OpenListOfficial)
+## 最近提交
 
-## Contributors
+```text
+f057739 feat(guangyapan): add OpenList driver
+```
 
-We sincerely thank the author [Xhofe](https://github.com/Xhofe) of the original project [AlistGo/alist](https://github.com/AlistGo/alist) and all other contributors.
-
-Thanks goes to these wonderful people:
-
-[![Contributors](https://contrib.rocks/image?repo=OpenListTeam/OpenList)](https://github.com/OpenListTeam/OpenList/graphs/contributors)
+该提交包含 GuangYaPan 驱动源码、注册入口和单元测试。

@@ -142,6 +142,8 @@ go build -tags=jsoniter -o openlist-guangyapan .
 
 ## 一键部署到 9876 端口
 
+脚本会从 GitHub Release 下载已经编译好的 Linux 二进制，不需要在服务器上安装 Go。
+
 脚本默认安装到：
 
 ```text
@@ -171,6 +173,13 @@ curl -fsSL https://raw.githubusercontent.com/xmm2022/openlist-guangyapan-src/mai
 ```bash
 curl -fsSL https://raw.githubusercontent.com/xmm2022/openlist-guangyapan-src/main/scripts/deploy-9876.sh | \
   sudo env HTTP_PORT=9876 INSTALL_DIR=/opt/openlist-guangyapan bash
+```
+
+支持的默认二进制架构：
+
+```text
+linux-amd64
+linux-arm64
 ```
 
 部署后访问：

@@ -2,7 +2,7 @@ name: Release builds
 
 on:
   release:
-    types: [ published ]
+    types: [published]
 
 permissions:
   contents: write
@@ -12,6 +12,7 @@ jobs:
   prerelease:
     name: Set Prerelease
     runs-on: ubuntu-latest
+    if: ${{ !startsWith(github.event.release.tag_name, 'guangyapan-') }}
     steps:
       - name: Prerelease
         uses: irongut/EditRelease@v1.2.0
@@ -23,14 +24,15 @@ jobs:
   # Main release job for all platforms
   release:
     needs: prerelease
+    if: ${{ !startsWith(github.event.release.tag_name, 'guangyapan-') }}
     strategy:
       matrix:
-        build-type: [ 'standard', 'lite' ]
-        target-platform: [ '', 'android', 'freebsd', 'linux_musl', 'linux_musl_arm' ]
+        build-type: ["standard", "lite"]
+        target-platform:
+          ["", "android", "freebsd", "linux_musl", "linux_musl_arm"]
     name: Release ${{ matrix.target-platform && format('{0} ', matrix.target-platform) || '' }}${{ matrix.build-type == 'lite' && 'Lite' || '' }}
     runs-on: ubuntu-latest
     steps:
-
       - name: Free Disk Space (Ubuntu)
         if: matrix.target-platform == ''
         uses: jlumbroso/free-disk-space@main
@@ -46,7 +48,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25.0'
+          go-version: "1.25.0"
 
       - name: Checkout
         uses: actions/checkout@v6
@@ -74,4 +76,3 @@ jobs:
           files: build/compress/*
           prerelease: false
           tag_name: ${{ github.event.release.tag_name }}
-

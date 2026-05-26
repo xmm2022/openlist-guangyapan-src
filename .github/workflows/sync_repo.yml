@@ -1,9 +1,6 @@
 name: Sync to Gitee
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 jobs:
@@ -27,7 +24,7 @@ jobs:
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          
+
           # Create a new branch
           git checkout --orphan new-main
           git add .

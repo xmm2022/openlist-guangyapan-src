@@ -4,12 +4,11 @@ set -euo pipefail
 APP_NAME="${APP_NAME:-openlist-guangyapan}"
 SERVICE_NAME="${SERVICE_NAME:-openlist-guangyapan}"
 HTTP_PORT="${HTTP_PORT:-9876}"
-REPO_URL="${REPO_URL:-https://github.com/xmm2022/openlist-guangyapan-src.git}"
-BRANCH="${BRANCH:-main}"
+REPO="${REPO:-xmm2022/openlist-guangyapan-src}"
+VERSION="${VERSION:-latest}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/openlist-guangyapan}"
-SRC_DIR="${SRC_DIR:-${INSTALL_DIR}/src}"
 DATA_DIR="${DATA_DIR:-${INSTALL_DIR}/data}"
-GO_BIN="${GO_BIN:-go}"
+GH_PROXY="${GH_PROXY:-}"
 
 BIN_PATH="${INSTALL_DIR}/${APP_NAME}"
 CONFIG_PATH="${DATA_DIR}/config.json"
@@ -38,41 +37,71 @@ if [ "${HTTP_PORT}" -lt 1 ] || [ "${HTTP_PORT}" -gt 65535 ]; then
   die "HTTP_PORT must be between 1 and 65535"
 fi
 
-need_cmd git
+need_cmd curl
+need_cmd install
 need_cmd systemctl
-need_cmd "${GO_BIN}"
+need_cmd tar
 
-mkdir -p "${INSTALL_DIR}" "${DATA_DIR}"
+case "$(uname -s)" in
+  Linux) ;;
+  *) die "only Linux is supported" ;;
+esac
 
-if [ -f "./go.mod" ] && grep -q "module github.com/OpenListTeam/OpenList/v4" "./go.mod"; then
-  BUILD_DIR="$(pwd)"
-  echo "Using current source tree: ${BUILD_DIR}"
+case "$(uname -m)" in
+  x86_64|amd64)
+    ARCH="amd64"
+    ;;
+  aarch64|arm64)
+    ARCH="arm64"
+    ;;
+  *)
+    die "unsupported architecture: $(uname -m). Supported: x86_64, aarch64"
+    ;;
+esac
+
+ASSET="${APP_NAME}_linux_${ARCH}.tar.gz"
+if [ "${VERSION}" = "latest" ]; then
+  DOWNLOAD_URL="${GH_PROXY}https://github.com/${REPO}/releases/latest/download/${ASSET}"
 else
-  if [ -d "${SRC_DIR}/.git" ]; then
-    echo "Updating source tree: ${SRC_DIR}"
-    git -C "${SRC_DIR}" fetch --prune origin
-    git -C "${SRC_DIR}" checkout "${BRANCH}"
-    git -C "${SRC_DIR}" reset --hard "origin/${BRANCH}"
-  else
-    echo "Cloning ${REPO_URL} (${BRANCH}) to ${SRC_DIR}"
-    rm -rf "${SRC_DIR}"
-    git clone --branch "${BRANCH}" "${REPO_URL}" "${SRC_DIR}"
-  fi
-  BUILD_DIR="${SRC_DIR}"
+  DOWNLOAD_URL="${GH_PROXY}https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}"
 fi
 
-echo "Building ${APP_NAME}"
-tmp_bin="$(mktemp)"
+tmp_dir="$(mktemp -d)"
 cleanup() {
-  rm -f "${tmp_bin}"
+  rm -rf "${tmp_dir}"
 }
 trap cleanup EXIT
 
-(
-  cd "${BUILD_DIR}"
-  "${GO_BIN}" build -tags=jsoniter -o "${tmp_bin}" .
-)
-install -m 0755 "${tmp_bin}" "${BIN_PATH}"
+echo "Downloading ${DOWNLOAD_URL}"
+curl -fL --retry 3 --retry-delay 2 -o "${tmp_dir}/${ASSET}" "${DOWNLOAD_URL}"
+
+sha_url="${DOWNLOAD_URL}.sha256"
+if command -v sha256sum >/dev/null 2>&1 && curl -fL --retry 3 --retry-delay 2 -o "${tmp_dir}/${ASSET}.sha256" "${sha_url}"; then
+  (
+    cd "${tmp_dir}"
+    sha256sum -c "${ASSET}.sha256"
+  )
+else
+  echo "Skipping sha256 verification"
+fi
+
+mkdir -p "${tmp_dir}/extract"
+tar -xzf "${tmp_dir}/${ASSET}" -C "${tmp_dir}/extract"
+
+if [ -f "${tmp_dir}/extract/${APP_NAME}" ]; then
+  extracted_bin="${tmp_dir}/extract/${APP_NAME}"
+elif [ -f "${tmp_dir}/extract/openlist" ]; then
+  extracted_bin="${tmp_dir}/extract/openlist"
+else
+  extracted_bin="$(find "${tmp_dir}/extract" -maxdepth 2 -type f -perm -111 | head -n 1 || true)"
+fi
+
+if [ -z "${extracted_bin:-}" ] || [ ! -f "${extracted_bin}" ]; then
+  die "downloaded archive does not contain an executable binary"
+fi
+
+mkdir -p "${INSTALL_DIR}" "${DATA_DIR}"
+install -m 0755 "${extracted_bin}" "${BIN_PATH}"
 
 if [ ! -f "${CONFIG_PATH}" ]; then
   cat >"${CONFIG_PATH}" <<JSON
@@ -84,60 +113,6 @@ if [ ! -f "${CONFIG_PATH}" ]; then
   }
 }
 JSON
-else
-  config_tmp="$(mktemp)"
-  config_tool_dir="$(mktemp -d)"
-  config_tool="${config_tool_dir}/update-openlist-config.go"
-  cat >"${config_tool}" <<'GO'
-package main
-
-import (
-	"encoding/json"
-	"fmt"
-	"os"
-	"strconv"
-)
-
-func main() {
-	configPath := os.Getenv("CONFIG_PATH")
-	port, err := strconv.Atoi(os.Getenv("HTTP_PORT"))
-	if err != nil {
-		panic(err)
-	}
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		panic(err)
-	}
-	var cfg map[string]any
-	if len(data) > 0 {
-		if err := json.Unmarshal(data, &cfg); err != nil {
-			panic(err)
-		}
-	}
-	if cfg == nil {
-		cfg = map[string]any{}
-	}
-	scheme, _ := cfg["scheme"].(map[string]any)
-	if scheme == nil {
-		scheme = map[string]any{}
-		cfg["scheme"] = scheme
-	}
-	scheme["address"] = "0.0.0.0"
-	scheme["http_port"] = port
-	if _, ok := scheme["https_port"]; !ok {
-		scheme["https_port"] = -1
-	}
-	out, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println(string(out))
-}
-GO
-  CONFIG_PATH="${CONFIG_PATH}" HTTP_PORT="${HTTP_PORT}" "${GO_BIN}" run "${config_tool}" >"${config_tmp}"
-  cat "${config_tmp}" >"${CONFIG_PATH}"
-  rm -f "${config_tmp}"
-  rm -rf "${config_tool_dir}"
 fi
 
 cat >"${UNIT_PATH}" <<UNIT
@@ -154,6 +129,8 @@ Restart=on-failure
 RestartSec=3
 Environment=TZ=Asia/Shanghai
 Environment=UMASK=022
+Environment=OPENLIST_ADDR=0.0.0.0
+Environment=OPENLIST_HTTP_PORT=${HTTP_PORT}
 
 [Install]
 WantedBy=multi-user.target
@@ -168,6 +145,7 @@ echo "Deployment complete."
 echo "Service: ${SERVICE_NAME}"
 echo "Install dir: ${INSTALL_DIR}"
 echo "Data dir: ${DATA_DIR}"
+echo "Binary: ${BIN_PATH}"
 echo "URL: http://127.0.0.1:${HTTP_PORT}"
 echo
 systemctl --no-pager --full status "${SERVICE_NAME}" || true

@@ -123,21 +123,67 @@ mp4,mkv,avi,mov,ts,m2ts
 
 用于 STRM/Emby 的常见方式是只保留 `.cas` 或由 `.cas` 生成的可访问地址，等用户播放时再临时恢复真实文件并获取播放链接。
 
-## 从仓库安装
+## 从公开仓库安装
 
-如果别人要直接使用你的仓库，需要先把本地提交推送到你的私有仓库远端。推送后可按源码方式安装：
+公开仓库地址：
 
 ```bash
-git clone <your-private-repo-url> openlist-guangyapan-src
+https://github.com/xmm2022/openlist-guangyapan-src
+```
+
+按源码方式安装：
+
+```bash
+git clone https://github.com/xmm2022/openlist-guangyapan-src.git openlist-guangyapan-src
 cd openlist-guangyapan-src
 go build -tags=jsoniter -o openlist-guangyapan .
 ./openlist-guangyapan server --data ./data
 ```
 
-也可以指定当前分支：
+## 一键部署到 9876 端口
+
+脚本默认安装到：
+
+```text
+/opt/openlist-guangyapan
+```
+
+默认 systemd 服务名：
+
+```text
+openlist-guangyapan.service
+```
+
+默认 HTTP 端口：
+
+```text
+9876
+```
+
+一键部署：
 
 ```bash
-git clone -b feat/guangyapan-readonly <your-private-repo-url> openlist-guangyapan-src
+curl -fsSL https://raw.githubusercontent.com/xmm2022/openlist-guangyapan-src/main/scripts/deploy-9876.sh | sudo bash
+```
+
+如果需要覆盖端口或安装路径：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xmm2022/openlist-guangyapan-src/main/scripts/deploy-9876.sh | \
+  sudo env HTTP_PORT=9876 INSTALL_DIR=/opt/openlist-guangyapan bash
+```
+
+部署后访问：
+
+```text
+http://127.0.0.1:9876
+```
+
+查看服务状态：
+
+```bash
+systemctl status openlist-guangyapan --no-pager
+journalctl -u openlist-guangyapan -f
 ```
 
 ## 本地验证
@@ -210,12 +256,13 @@ ss -ltnp | rg '(:5246|:5247)'
 - 不要把构建产物 `openlist-guangyapan`、`.prev` 备份文件、运行数据目录提交进 git。
 - GuangYaPan 接口字段可能会变化，如遇到写操作失败，优先检查 `drivers/guangyapan/api.go` 和 `drivers/guangyapan/upload.go` 中的接口路径与请求体。
 
-## 最近提交
+## 关键提交
 
 ```text
 f057739 feat(guangyapan): add OpenList driver
 b080322 docs: update guangyapan readme
 745c6aa feat: add CAS support for 139 and 189pc
+5dbe894 docs: document CAS usage
 ```
 
-这些提交包含 GuangYaPan 驱动源码、注册入口、单元测试，以及 139/189CloudPC CAS 能力。
+这些提交包含 GuangYaPan 驱动源码、注册入口、单元测试、139/189CloudPC CAS 能力和基本使用说明。部署脚本见 `scripts/deploy-9876.sh`。

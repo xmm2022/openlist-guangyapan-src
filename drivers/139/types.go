@@ -2,6 +2,9 @@ package _139
 
 import (
 	"encoding/xml"
+	"strings"
+
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
 
 const (
@@ -242,13 +245,22 @@ type PersonalThumbnail struct {
 }
 
 type PersonalFileItem struct {
-	FileId     string              `json:"fileId"`
-	Name       string              `json:"name"`
-	Size       int64               `json:"size"`
-	Type       string              `json:"type"`
-	CreatedAt  string              `json:"createdAt"`
-	UpdatedAt  string              `json:"updatedAt"`
-	Thumbnails []PersonalThumbnail `json:"thumbnailUrls"`
+	FileId               string              `json:"fileId"`
+	Name                 string              `json:"name"`
+	Size                 int64               `json:"size"`
+	Type                 string              `json:"type"`
+	CreatedAt            string              `json:"createdAt"`
+	UpdatedAt            string              `json:"updatedAt"`
+	ContentHash          string              `json:"contentHash"`
+	ContentHashAlgorithm string              `json:"contentHashAlgorithm"`
+	Thumbnails           []PersonalThumbnail `json:"thumbnailUrls"`
+}
+
+func (p PersonalFileItem) HashInfo() utils.HashInfo {
+	if strings.EqualFold(p.ContentHashAlgorithm, "sha256") && len(p.ContentHash) == utils.SHA256.Width {
+		return utils.NewHashInfo(utils.SHA256, strings.ToLower(p.ContentHash))
+	}
+	return utils.HashInfo{}
 }
 
 type PersonalListResp struct {

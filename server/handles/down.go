@@ -3,6 +3,7 @@ package handles
 import (
 	"errors"
 	stdpath "path"
+	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -24,6 +25,26 @@ func Down(c *gin.Context) {
 	if err != nil {
 		common.ErrorPage(c, err, 500)
 		return
+	}
+	if shouldPreviewCASOnDown(c) || shouldRestoreCASOnDownload(storage, filename) {
+		link, file, ok, previewErr := linkCASPreview(c, rawPath, storage, model.LinkArgs{
+			IP:       c.ClientIP(),
+			Header:   c.Request.Header,
+			Type:     c.Query("type"),
+			Redirect: true,
+		})
+		if previewErr != nil {
+			common.ErrorPage(c, previewErr, 500)
+			return
+		}
+		if ok {
+			if common.ShouldProxy(storage, file.GetName()) {
+				proxy(c, link, file, storage.GetStorage().ProxyRange)
+			} else {
+				redirect(c, link)
+			}
+			return
+		}
 	}
 	if common.ShouldProxy(storage, filename) {
 		Proxy(c)
@@ -51,6 +72,20 @@ func Proxy(c *gin.Context) {
 		common.ErrorPage(c, err, 500)
 		return
 	}
+	if shouldPreviewCASOnDown(c) || shouldRestoreCASOnDownload(storage, filename) {
+		link, file, ok, previewErr := linkCASPreview(c, rawPath, storage, model.LinkArgs{
+			Header: c.Request.Header,
+			Type:   c.Query("type"),
+		})
+		if previewErr != nil {
+			common.ErrorPage(c, previewErr, 500)
+			return
+		}
+		if ok {
+			proxy(c, link, file, storage.GetStorage().ProxyRange)
+			return
+		}
+	}
 	if canProxy(storage, filename) {
 		if _, ok := c.GetQuery("d"); !ok {
 			if url := common.GenerateDownProxyURL(storage.GetStorage(), rawPath); url != "" {
@@ -71,6 +106,62 @@ func Proxy(c *gin.Context) {
 		common.ErrorPage(c, errors.New("proxy not allowed"), 403)
 		return
 	}
+}
+
+func shouldPreviewCASOnDown(c *gin.Context) bool {
+	if c.Query("type") != "" {
+		return true
+	}
+	if c.GetHeader("Range") != "" {
+		return true
+	}
+	switch strings.ToLower(c.GetHeader("Sec-Fetch-Dest")) {
+	case "video", "audio":
+		return true
+	}
+	accept := strings.ToLower(c.GetHeader("Accept"))
+	return strings.Contains(accept, "video/") || strings.Contains(accept, "audio/")
+}
+
+func isCASFile(filename string) bool {
+	return strings.HasSuffix(strings.ToLower(filename), ".cas")
+}
+
+func shouldRestoreCASOnDownload(storage driver.Driver, filename string) bool {
+	if !isCASFile(filename) {
+		return false
+	}
+	controller, ok := storage.(driver.CASDownloadRestoreController)
+	return ok && controller.CASDownloadRestoreEnabled()
+}
+
+func linkCASPreview(c *gin.Context, rawPath string, storage driver.Driver, args model.LinkArgs) (*model.Link, model.Obj, bool, error) {
+	namer, ok := storage.(driver.CASPreviewNamer)
+	if !ok {
+		return nil, nil, false, nil
+	}
+	obj, err := fs.Get(c.Request.Context(), rawPath, &fs.GetArgs{})
+	if err != nil {
+		return nil, nil, false, err
+	}
+	previewName, err := namer.CASPreviewName(c.Request.Context(), obj)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if previewName == "" || previewName == obj.GetName() {
+		return nil, nil, false, nil
+	}
+	args.Type = "cas_video"
+	link, file, err := fs.Link(c.Request.Context(), rawPath, args)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if file != nil {
+		file = &model.ObjWrapName{Name: previewName, Obj: file}
+	} else {
+		file = &model.Object{Name: previewName, Size: obj.GetSize(), Modified: obj.ModTime(), Ctime: obj.CreateTime(), HashInfo: obj.GetHash()}
+	}
+	return link, file, true, nil
 }
 
 func redirect(c *gin.Context, link *model.Link) {

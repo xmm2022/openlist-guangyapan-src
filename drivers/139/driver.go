@@ -158,6 +158,9 @@ func (d *Yun139) List(ctx context.Context, dir model.Obj, args model.ListArgs) (
 }
 
 func (d *Yun139) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
+	if d.shouldPlayCAS(file, args) {
+		return d.linkCASVideo(ctx, file, args)
+	}
 	var url string
 	var err error
 	switch d.Addition.Type {
@@ -614,183 +617,228 @@ func (d *Yun139) getPartSize(size int64) int64 {
 	return 100 * utils.MB
 }
 
-func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
+func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
 	switch d.Addition.Type {
 	case MetaPersonalNew:
-		var err error
-		fullHash := stream.GetHash().GetHash(utils.SHA256)
-		if len(fullHash) != utils.SHA256.Width {
-			_, fullHash, err = streamPkg.CacheFullAndHash(stream, &up, utils.SHA256)
-			if err != nil {
-				return err
-			}
+		sourceName := stream.GetName()
+		sourceSize := stream.GetSize()
+		preparedStream, restoredObj, handled, err := d.prepareCASPut(ctx, dstDir, stream)
+		if err != nil || handled {
+			return restoredObj, err
 		}
-
-		size := stream.GetSize()
-		partSize := d.getPartSize(size)
-		part := int64(1)
-		if size > partSize {
-			part = (size + partSize - 1) / partSize
-		}
-
-		// 生成所有 partInfos
-		partInfos := make([]PartInfo, 0, part)
-		for i := int64(0); i < part; i++ {
-			if utils.IsCanceled(ctx) {
-				return ctx.Err()
-			}
-			start := i * partSize
-			byteSize := min(size-start, partSize)
-			partNumber := i + 1
-			partInfo := PartInfo{
-				PartNumber: partNumber,
-				PartSize:   byteSize,
-				ParallelHashCtx: ParallelHashCtx{
-					PartOffset: start,
-				},
-			}
-			partInfos = append(partInfos, partInfo)
-		}
-
-		// 筛选出前 100 个 partInfos
-		firstPartInfos := partInfos
-		if len(firstPartInfos) > 100 {
-			firstPartInfos = firstPartInfos[:100]
-		}
-
-		// 创建任务，获取上传信息和前100个分片的上传地址
-		data := base.Json{
-			"contentHash":          fullHash,
-			"contentHashAlgorithm": "SHA256",
-			"contentType":          "application/octet-stream",
-			"parallelUpload":       false,
-			"partInfos":            firstPartInfos,
-			"size":                 size,
-			"parentFileId":         dstDir.GetID(),
-			"name":                 stream.GetName(),
-			"type":                 "file",
-			"fileRenameMode":       "auto_rename",
-		}
-		pathname := "/file/create"
-		var resp PersonalUploadResp
-		_, err = d.personalPost(pathname, data, &resp)
+		stream = preparedStream
+		newObj, fullHash, err := d.personalPut(ctx, dstDir, stream, up)
 		if err != nil {
-			return err
+			return nil, err
 		}
-
-		// 判断文件是否已存在
-		// resp.Data.Exist: true 已存在同名文件且校验相同，云端不会重复增加文件，无需手动处理冲突
-		if resp.Data.Exist {
-			return nil
+		info := &casUploadInfo{Name: sourceName, Size: sourceSize, SHA256: fullHash}
+		casObj, err := d.uploadCAS(ctx, dstDir, info)
+		if err != nil {
+			return nil, err
 		}
-
-		// 判断文件是否支持快传
-		// resp.Data.RapidUpload: true 支持快传，但此处直接检测是否返回分片的上传地址
-		// 快传的情况下同样需要手动处理冲突
-		if resp.Data.PartInfos != nil {
-			// Progress
-			p := driver.NewProgress(size, up)
-			rateLimited := driver.NewLimitedUploadStream(ctx, stream)
-
-			// 先上传前100个分片
-			err = d.uploadPersonalParts(ctx, partInfos, resp.Data.PartInfos, rateLimited, p)
-			if err != nil {
-				return err
+		if casObj != nil && d.shouldDeleteSource() {
+			if err = d.deleteSource(ctx, dstDir, newObj, info); err != nil {
+				return nil, err
 			}
-
-			// 如果还有剩余分片，分批获取上传地址并上传
-			for i := 100; i < len(partInfos); i += 100 {
-				end := min(i+100, len(partInfos))
-				batchPartInfos := partInfos[i:end]
-				moredata := base.Json{
-					"fileId":    resp.Data.FileId,
-					"uploadId":  resp.Data.UploadId,
-					"partInfos": batchPartInfos,
-					"commonAccountInfo": base.Json{
-						"account":     d.getAccount(),
-						"accountType": 1,
-					},
-				}
-				pathname := "/file/getUploadUrl"
-				var moreresp PersonalUploadUrlResp
-				_, err = d.personalPost(pathname, moredata, &moreresp)
-				if err != nil {
-					return err
-				}
-				err = d.uploadPersonalParts(ctx, partInfos, moreresp.Data.PartInfos, rateLimited, p)
-				if err != nil {
-					return err
-				}
-			}
-
-			// 全部分片上传完毕后，complete
-			data = base.Json{
-				"contentHash":          fullHash,
-				"contentHashAlgorithm": "SHA256",
-				"fileId":               resp.Data.FileId,
-				"uploadId":             resp.Data.UploadId,
-			}
-			_, err = d.personalPost("/file/complete", data, nil)
-			if err != nil {
-				return err
-			}
+			return casObj, nil
 		}
-
-		// 处理冲突
-		if resp.Data.FileName != stream.GetName() {
-			log.Debugf("[139] conflict detected: %s != %s", resp.Data.FileName, stream.GetName())
-			// 给服务器一定时间处理数据，避免无法刷新文件列表
-			time.Sleep(time.Millisecond * 500)
-			// 刷新并获取文件列表
-			files, err := d.List(ctx, dstDir, model.ListArgs{Refresh: true})
-			if err != nil {
-				return err
-			}
-			// 删除旧文件
-			for _, file := range files {
-				if file.GetName() == stream.GetName() {
-					log.Debugf("[139] conflict: removing old: %s", file.GetName())
-					// 删除前重命名旧文件，避免仍旧冲突
-					err = d.Rename(ctx, file, stream.GetName()+random.String(4))
-					if err != nil {
-						return err
-					}
-					err = d.Remove(ctx, file)
-					if err != nil {
-						return err
-					}
-					break
-				}
-			}
-			// 重命名新文件
-			for _, file := range files {
-				if file.GetName() == resp.Data.FileName {
-					log.Debugf("[139] conflict: renaming new: %s => %s", file.GetName(), stream.GetName())
-					err = d.Rename(ctx, file, stream.GetName())
-					if err != nil {
-						return err
-					}
-					break
-				}
-			}
-		}
-		return nil
+		return newObj, nil
 	case MetaPersonal:
 		fallthrough
 	case MetaGroup:
 		fallthrough
 	case MetaFamily:
-		// 处理冲突
-		// 获取文件列表
+		return nil, d.legacyPut(ctx, dstDir, stream, up)
+	default:
+		return nil, errs.NotImplement
+	}
+}
+
+func (d *Yun139) personalPartInfos(ctx context.Context, size int64) ([]PartInfo, error) {
+	partSize := d.getPartSize(size)
+	part := int64(1)
+	if size > partSize {
+		part = (size + partSize - 1) / partSize
+	}
+
+	partInfos := make([]PartInfo, 0, part)
+	for i := int64(0); i < part; i++ {
+		if utils.IsCanceled(ctx) {
+			return nil, ctx.Err()
+		}
+		start := i * partSize
+		byteSize := min(size-start, partSize)
+		partInfos = append(partInfos, PartInfo{
+			PartNumber: i + 1,
+			PartSize:   byteSize,
+			ParallelHashCtx: ParallelHashCtx{
+				PartOffset: start,
+			},
+		})
+	}
+	return partInfos, nil
+}
+
+func (d *Yun139) personalCreateBySHA256(ctx context.Context, dstDir model.Obj, name string, size int64, fullHash string, fileRenameMode string) (*PersonalUploadResp, []PartInfo, error) {
+	if len(fullHash) != utils.SHA256.Width {
+		return nil, nil, fmt.Errorf("invalid sha256 hash for %s", name)
+	}
+	partInfos, err := d.personalPartInfos(ctx, size)
+	if err != nil {
+		return nil, nil, err
+	}
+	firstPartInfos := partInfos
+	if len(firstPartInfos) > 100 {
+		firstPartInfos = firstPartInfos[:100]
+	}
+	data := base.Json{
+		"contentHash":          fullHash,
+		"contentHashAlgorithm": "SHA256",
+		"contentType":          "application/octet-stream",
+		"parallelUpload":       false,
+		"partInfos":            firstPartInfos,
+		"size":                 size,
+		"parentFileId":         dstDir.GetID(),
+		"name":                 name,
+		"type":                 "file",
+		"fileRenameMode":       fileRenameMode,
+	}
+	var resp PersonalUploadResp
+	_, err = d.personalPost("/file/create", data, &resp)
+	return &resp, partInfos, err
+}
+
+func (d *Yun139) personalObjFromUploadResp(resp *PersonalUploadResp, name string, size int64, fullHash string) model.Obj {
+	if resp == nil {
+		return &model.Object{Name: name, Size: size, HashInfo: utils.NewHashInfo(utils.SHA256, fullHash)}
+	}
+	fileName := resp.Data.FileName
+	if fileName == "" {
+		fileName = name
+	}
+	return &model.Object{
+		ID:       resp.Data.FileId,
+		Name:     fileName,
+		Size:     size,
+		Modified: time.Now(),
+		Ctime:    time.Now(),
+		HashInfo: utils.NewHashInfo(utils.SHA256, fullHash),
+	}
+}
+
+func (d *Yun139) personalPut(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) (model.Obj, string, error) {
+	var err error
+	fullHash := stream.GetHash().GetHash(utils.SHA256)
+	if len(fullHash) != utils.SHA256.Width {
+		_, fullHash, err = streamPkg.CacheFullAndHash(stream, &up, utils.SHA256)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	size := stream.GetSize()
+	resp, partInfos, err := d.personalCreateBySHA256(ctx, dstDir, stream.GetName(), size, fullHash, "auto_rename")
+	if err != nil {
+		return nil, "", err
+	}
+
+	if resp.Data.Exist {
+		return d.personalObjFromUploadResp(resp, stream.GetName(), size, fullHash), fullHash, nil
+	}
+
+	if resp.Data.PartInfos != nil {
+		p := driver.NewProgress(size, up)
+		rateLimited := driver.NewLimitedUploadStream(ctx, stream)
+
+		err = d.uploadPersonalParts(ctx, partInfos, resp.Data.PartInfos, rateLimited, p)
+		if err != nil {
+			return nil, "", err
+		}
+
+		for i := 100; i < len(partInfos); i += 100 {
+			end := min(i+100, len(partInfos))
+			batchPartInfos := partInfos[i:end]
+			moredata := base.Json{
+				"fileId":    resp.Data.FileId,
+				"uploadId":  resp.Data.UploadId,
+				"partInfos": batchPartInfos,
+				"commonAccountInfo": base.Json{
+					"account":     d.getAccount(),
+					"accountType": 1,
+				},
+			}
+			var moreresp PersonalUploadUrlResp
+			_, err = d.personalPost("/file/getUploadUrl", moredata, &moreresp)
+			if err != nil {
+				return nil, "", err
+			}
+			err = d.uploadPersonalParts(ctx, partInfos, moreresp.Data.PartInfos, rateLimited, p)
+			if err != nil {
+				return nil, "", err
+			}
+		}
+
+		data := base.Json{
+			"contentHash":          fullHash,
+			"contentHashAlgorithm": "SHA256",
+			"fileId":               resp.Data.FileId,
+			"uploadId":             resp.Data.UploadId,
+		}
+		_, err = d.personalPost("/file/complete", data, nil)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+
+	if resp.Data.FileName != "" && resp.Data.FileName != stream.GetName() {
+		log.Debugf("[139] conflict detected: %s != %s", resp.Data.FileName, stream.GetName())
+		time.Sleep(time.Millisecond * 500)
+		files, err := d.List(ctx, dstDir, model.ListArgs{Refresh: true})
+		if err != nil {
+			return nil, "", err
+		}
+		for _, file := range files {
+			if file.GetName() == stream.GetName() {
+				log.Debugf("[139] conflict: removing old: %s", file.GetName())
+				err = d.Rename(ctx, file, stream.GetName()+random.String(4))
+				if err != nil {
+					return nil, "", err
+				}
+				err = d.Remove(ctx, file)
+				if err != nil {
+					return nil, "", err
+				}
+				break
+			}
+		}
+		for _, file := range files {
+			if file.GetName() == resp.Data.FileName {
+				log.Debugf("[139] conflict: renaming new: %s => %s", file.GetName(), stream.GetName())
+				err = d.Rename(ctx, file, stream.GetName())
+				if err != nil {
+					return nil, "", err
+				}
+				resp.Data.FileName = stream.GetName()
+				break
+			}
+		}
+	}
+	return d.personalObjFromUploadResp(resp, stream.GetName(), size, fullHash), fullHash, nil
+}
+
+func (d *Yun139) legacyPut(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
+	switch d.Addition.Type {
+	case MetaPersonal:
+		fallthrough
+	case MetaGroup:
+		fallthrough
+	case MetaFamily:
 		files, err := d.List(ctx, dstDir, model.ListArgs{})
 		if err != nil {
 			return err
 		}
-		// 删除旧文件
 		for _, file := range files {
 			if file.GetName() == stream.GetName() {
 				log.Debugf("[139] conflict: removing old: %s", file.GetName())
-				// 删除前重命名旧文件，避免仍旧冲突
 				err = d.Rename(ctx, file, stream.GetName()+random.String(4))
 				if err != nil {
 					return err
@@ -816,7 +864,6 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 			"uploadContentList": []base.Json{{
 				"contentName": stream.GetName(),
 				"contentSize": reportSize,
-				// "digest": "5a3231986ce7a6b46e408612d385bafa"
 			}},
 			"parentCatalogID": dstDir.GetID(),
 			"newCatalogName":  "",
@@ -828,7 +875,6 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 		pathname := "/orchestration/personalCloud/uploadAndDownload/v1.0/pcUploadFileRequest"
 		if d.isFamily() || d.Addition.Type == MetaGroup {
 			uploadPath := path.Join(dstDir.GetPath(), dstDir.GetID())
-			// if dstDir is root folder
 			if dstDir.GetID() == d.RootFolderID {
 				uploadPath = d.RootPath
 			}
@@ -837,12 +883,11 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 				"manualRename": 2,
 				"operation":    0,
 				"path":         uploadPath,
-				"seqNo":        random.String(32), // 序列号不能为空
+				"seqNo":        random.String(32),
 				"totalSize":    reportSize,
 				"uploadContentList": []base.Json{{
 					"contentName": stream.GetName(),
 					"contentSize": reportSize,
-					// "digest": "5a3231986ce7a6b46e408612d385bafa"
 				}},
 			})
 			pathname = "/orchestration/familyCloud-rebuild/content/v1.0/getFileUploadURL"
@@ -858,7 +903,6 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 		}
 
 		size := stream.GetSize()
-		// Progress
 		p := driver.NewProgress(size, up)
 		partSize := d.getPartSize(size)
 		part := int64(1)
@@ -875,7 +919,6 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 			byteSize := min(size-start, partSize)
 
 			limitReader := io.LimitReader(rateLimited, byteSize)
-			// Update Progress
 			r := io.TeeReader(limitReader, p)
 			req, err := http.NewRequestWithContext(ctx, http.MethodPost, resp.Data.UploadResult.RedirectionURL, r)
 			if err != nil {

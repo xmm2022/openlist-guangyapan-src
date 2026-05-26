@@ -18,6 +18,11 @@ type Addition struct {
 	CustomUploadPartSize int64  `json:"custom_upload_part_size" type:"number" default:"0" help:"0 for auto"`
 	ReportRealSize       bool   `json:"report_real_size" type:"bool" default:"true" help:"Enable to report the real file size during upload"`
 	UseLargeThumbnail    bool   `json:"use_large_thumbnail" type:"bool" default:"false" help:"Enable to use large thumbnail for images"`
+	GenerateCAS          bool   `json:"generate_cas" help:"After upload, generate a same-name .cas file in the same directory"`
+	DeleteSource         bool   `json:"delete_source" help:"After generating the .cas file, delete the uploaded source file and clear recycle bin entry"`
+	RestoreSourceFromCAS bool   `json:"restore_source_from_cas" help:"Restore source file from .cas metadata"`
+	CASExtAllowlist      string `json:"cas_ext_allowlist" help:"CAS extension allowlist. Empty means all extensions are allowed. Example: mp4,mkv,iso,zip"`
+	CASDownloadRestore   bool   `json:"cas_download_restore" help:"When enabled, downloading .cas files via /d/* will restore and return the real file instead of raw CAS metadata"`
 }
 
 var config = driver.Config{

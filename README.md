@@ -168,6 +168,23 @@ openlist-guangyapan.service
 curl -fsSL https://raw.githubusercontent.com/xmm2022/openlist-guangyapan-src/main/scripts/deploy-9876.sh | sudo bash
 ```
 
+管道方式会直接安装或更新。如果想打开类似官方脚本的管理面板，先下载脚本再运行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xmm2022/openlist-guangyapan-src/main/scripts/deploy-9876.sh -o deploy-9876.sh
+sudo bash deploy-9876.sh
+```
+
+也可以直接指定命令：
+
+```bash
+sudo bash deploy-9876.sh menu
+sudo bash deploy-9876.sh status
+sudo bash deploy-9876.sh restart
+sudo bash deploy-9876.sh logs
+sudo bash deploy-9876.sh password random
+```
+
 如果需要覆盖端口或安装路径：
 
 ```bash

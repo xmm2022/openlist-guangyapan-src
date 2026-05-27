@@ -65,6 +65,9 @@ func (d *Pan115) List(ctx context.Context, dir model.Obj, args model.ListArgs) (
 }
 
 func (d *Pan115) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
+	if d.shouldPlayCAS(file, args) {
+		return d.linkCASVideo(ctx, file, args)
+	}
 	if err := d.WaitLimit(ctx); err != nil {
 		return nil, err
 	}
@@ -157,17 +160,47 @@ func (d *Pan115) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 	if err := d.WaitLimit(ctx); err != nil {
 		return nil, err
 	}
+	sourceName := stream.GetName()
+	sourceSize := stream.GetSize()
 
+	preparedStream, restoredObj, handled, err := d.prepareCASPut(ctx, dstDir, stream)
+	if err != nil || handled {
+		return restoredObj, err
+	}
+	stream = preparedStream
+
+	newObj, info, err := d.putRaw(ctx, dstDir, stream, up)
+	if err != nil {
+		return nil, err
+	}
+	if info != nil {
+		info.Name = sourceName
+		info.Size = sourceSize
+	}
+	casObj, err := d.uploadCAS(ctx, dstDir, info)
+	if err != nil {
+		return nil, err
+	}
+	if casObj != nil && d.shouldDeleteSource() {
+		if err = d.deleteSource(ctx, newObj); err != nil {
+			return nil, err
+		}
+		return casObj, nil
+	}
+	return newObj, nil
+}
+
+func (d *Pan115) putRaw(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) (model.Obj, *casUploadInfo, error) {
 	var (
 		fastInfo *driver115.UploadInitResp
 		dirID    = dstDir.GetID()
 	)
 
 	if ok, err := d.client.UploadAvailable(); err != nil || !ok {
-		return nil, err
+		return nil, nil, err
 	}
 	if stream.GetSize() > d.client.UploadMetaInfo.SizeLimit {
-		return nil, driver115.ErrUploadTooLarge
+		return nil, nil, driver115.ErrUploadTooLarge
 	}
 	//if digest, err = d.client.GetDigestResult(stream); err != nil {
 	//	return err
@@ -180,56 +213,63 @@ func (d *Pan115) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 	}
 	reader, err := stream.RangeRead(http_range.Range{Start: 0, Length: hashSize})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	preHash, err := utils.HashReader(utils.SHA1, reader)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	preHash = strings.ToUpper(preHash)
 	fullHash := stream.GetHash().GetHash(utils.SHA1)
 	if len(fullHash) != utils.SHA1.Width {
 		_, fullHash, err = streamPkg.CacheFullAndHash(stream, &up, utils.SHA1)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	fullHash = strings.ToUpper(fullHash)
+	info := &casUploadInfo{
+		Provider: casProvider115,
+		Name:     stream.GetName(),
+		Size:     stream.GetSize(),
+		SHA1:     fullHash,
+		PreID:    preHash,
+	}
 
 	// rapid-upload
 	// note that 115 add timeout for rapid-upload,
 	// and "sig invalid" err is thrown even when the hash is correct after timeout.
 	if fastInfo, err = d.rapidUpload(stream.GetSize(), stream.GetName(), dirID, preHash, fullHash, stream); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if matched, err := fastInfo.Ok(); err != nil {
-		return nil, err
+		return nil, nil, err
 	} else if matched {
 		f, err := d.getNewFileByPickCode(fastInfo.PickCode)
 		if err != nil {
-			return nil, nil
+			return nil, nil, err
 		}
-		return f, nil
+		return f, info, nil
 	}
 
 	var uploadResult *UploadResult
 	// 闪传失败，上传
 	if stream.GetSize() <= 10*utils.MB { // 文件大小小于10MB，改用普通模式上传
 		if uploadResult, err = d.UploadByOSS(ctx, &fastInfo.UploadOSSParams, stream, dirID, up); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	} else {
 		// 分片上传
 		if uploadResult, err = d.UploadByMultipart(ctx, &fastInfo.UploadOSSParams, stream.GetSize(), stream, dirID, up); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
 	file, err := d.getNewFile(uploadResult.Data.FileID)
 	if err != nil {
-		return nil, nil
+		return nil, nil, err
 	}
-	return file, nil
+	return file, info, nil
 }
 
 func (d *Pan115) OfflineList(ctx context.Context) ([]*driver115.OfflineTask, error) {

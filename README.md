@@ -26,6 +26,7 @@
   - 获取光鸭资源中心 OSS 临时凭证。
   - 通过 Aliyun OSS SDK 上传文件。
 - 合入 CAS 轻量占位文件能力：
+  - `115 Cloud` 支持 SHA1 / PreID 型 `.cas`。
   - `139Yun` 支持 SHA256 型 `.cas`，适用于 `personal_new` 类型。
   - `189CloudPC` 支持 MD5 / SliceMD5 型 `.cas`。
   - 可在上传真实文件后生成同名 `.cas`，并按配置删除源文件。
@@ -45,6 +46,7 @@ drivers/guangyapan/upload.go
 internal/casmeta/casmeta.go
 internal/driver/cas.go
 drivers/139/cas.go
+drivers/115/cas.go
 drivers/189pc/cas_payload.go
 drivers/189pc/cas_restore.go
 drivers/189pc/cas_preview.go
@@ -79,6 +81,26 @@ aMe-8VSlkrbQXpUR
 `root_folder_id` 可留空，表示光鸭根目录。
 
 ## CAS 配置
+
+### 115 Cloud
+
+115 CAS 使用 SHA1 / PreID 秒传恢复，可用配置字段：
+
+```text
+generate_cas
+delete_source
+restore_source_from_cas
+cas_ext_allowlist
+cas_download_restore
+```
+
+开启 `generate_cas` 后，上传真实文件会在同目录生成同名 `.cas`。同时开启 `delete_source` 后，生成 `.cas` 成功后会删除源文件，只保留占位 `.cas`。
+
+开启 `restore_source_from_cas` 后，上传 `.cas` 到 115 目录时会尝试通过 115 秒传恢复真实文件。
+
+开启 `cas_download_restore` 后，通过 `/d/*.cas` 或 `/p/*.cas` 访问 `.cas` 时会临时恢复真实文件，拿到播放/下载链接后清理临时恢复文件。外部 STRM 已经指向 `.cas` URL 时，Emby 播放会走这个恢复流程。
+
+注意：115 的 `.cas` 当前只保存 SHA1 和 PreID。如果 115 秒传接口要求额外区间 SHA1 校验，`.cas` 本身没有原始文件字节，恢复会失败并返回明确错误。
 
 ### 139Yun
 
@@ -219,7 +241,7 @@ journalctl -u openlist-guangyapan -f
 ```bash
 cd /root/openlist-guangyapan-src
 go test -count=1 ./drivers/guangyapan
-go test -count=1 ./internal/casmeta ./drivers/139 ./drivers/189pc ./server/handles
+go test -count=1 ./internal/casmeta ./drivers/139 ./drivers/189pc ./drivers/115 ./server/handles
 ```
 
 构建二进制：

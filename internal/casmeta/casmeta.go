@@ -23,18 +23,24 @@ var globalExtAllowlist struct {
 }
 
 type Info struct {
+	Provider string
 	Name     string
 	Size     int64
 	MD5      string
 	SliceMD5 string
+	SHA1     string
+	PreID    string
 	SHA256   string
 }
 
 type Payload struct {
+	Provider   string `json:"provider,omitempty"`
 	Name       string `json:"name"`
 	Size       int64  `json:"size"`
 	MD5        string `json:"md5"`
 	SliceMD5   string `json:"sliceMd5"`
+	SHA1       string `json:"sha1,omitempty"`
+	PreID      string `json:"preID,omitempty"`
 	SHA256     string `json:"sha256,omitempty"`
 	CreateTime string `json:"create_time"`
 }
@@ -112,10 +118,13 @@ func Encode(info *Info) ([]byte, error) {
 		sliceMD5 = info.MD5
 	}
 	content, err := utils.Json.Marshal(Payload{
+		Provider:   info.Provider,
 		Name:       info.Name,
 		Size:       info.Size,
 		MD5:        info.MD5,
 		SliceMD5:   sliceMD5,
+		SHA1:       info.SHA1,
+		PreID:      info.PreID,
 		SHA256:     info.SHA256,
 		CreateTime: strconv.FormatInt(time.Now().Unix(), 10),
 	})
@@ -135,17 +144,23 @@ func Decode(data []byte) (*Info, error) {
 	if err = utils.Json.Unmarshal(decoded, &payload); err != nil {
 		return nil, err
 	}
-	if payload.Name == "" || payload.Size < 0 || (payload.MD5 == "" && payload.SHA256 == "") {
+	if payload.Name == "" || payload.Size < 0 || (payload.MD5 == "" && payload.SHA256 == "" && payload.SHA1 == "") {
+		return nil, fmt.Errorf("invalid cas payload")
+	}
+	if strings.EqualFold(payload.Provider, "115") && (payload.SHA1 == "" || payload.PreID == "") {
 		return nil, fmt.Errorf("invalid cas payload")
 	}
 	if payload.SliceMD5 == "" {
 		payload.SliceMD5 = payload.MD5
 	}
 	return &Info{
+		Provider: payload.Provider,
 		Name:     payload.Name,
 		Size:     payload.Size,
 		MD5:      payload.MD5,
 		SliceMD5: payload.SliceMD5,
+		SHA1:     payload.SHA1,
+		PreID:    payload.PreID,
 		SHA256:   payload.SHA256,
 	}, nil
 }

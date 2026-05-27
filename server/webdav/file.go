@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path"
 	"path/filepath"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -17,6 +18,14 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/pkg/errors"
+)
+
+var (
+	moveFileOp            = fs.Move
+	renameFileOp          = fs.Rename
+	listFileOp            = fs.List
+	moveRenameRetryDelay  = 300 * time.Millisecond
+	moveRenameMaxAttempts = 3
 )
 
 // slashClean is equivalent to but slightly more efficient than
@@ -56,14 +65,14 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 		return http.StatusForbidden, nil
 	}
 	if srcDir == dstDir {
-		err = fs.Rename(ctx, src, dstName)
+		err = renameFileOp(ctx, src, dstName)
 	} else {
-		_, err = fs.Move(context.WithValue(ctx, conf.NoTaskKey, struct{}{}), src, dstDir)
+		_, err = moveFileOp(context.WithValue(ctx, conf.NoTaskKey, struct{}{}), src, dstDir)
 		if err != nil {
 			return http.StatusInternalServerError, err
 		}
 		if srcName != dstName {
-			err = fs.Rename(ctx, path.Join(dstDir, srcName), dstName)
+			err = renameMovedFile(ctx, dstDir, srcName, dstName)
 		}
 	}
 	if err != nil {
@@ -71,6 +80,28 @@ func moveFiles(ctx context.Context, src, dst string, overwrite bool) (status int
 	}
 	// TODO if there are no files copy, should return 204
 	return http.StatusCreated, nil
+}
+
+func renameMovedFile(ctx context.Context, dstDir, srcName, dstName string) error {
+	srcPath := path.Join(dstDir, srcName)
+	var err error
+	for attempt := 0; attempt < moveRenameMaxAttempts; attempt++ {
+		err = renameFileOp(ctx, srcPath, dstName)
+		if err == nil {
+			return nil
+		}
+		if !errs.IsObjectNotFound(err) {
+			return err
+		}
+		if attempt == moveRenameMaxAttempts-1 {
+			break
+		}
+		_, _ = listFileOp(ctx, dstDir, &fs.ListArgs{Refresh: true, NoLog: true})
+		if moveRenameRetryDelay > 0 {
+			time.Sleep(moveRenameRetryDelay)
+		}
+	}
+	return err
 }
 
 // copyFiles copies files and/or directories from src to dst.

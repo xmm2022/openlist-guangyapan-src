@@ -32,6 +32,7 @@
   - 可在上传真实文件后生成同名 `.cas`，并按配置删除源文件。
   - 访问 `.cas` 播放时临时恢复真实文件，获取真实播放链接后清理临时目录。
   - 支持通过 `/d/*.cas` 或 `/p/*.cas` 进入真实文件预览/Range 播放流程。
+- 新增 `115share2cas` 辅助工具，可把 115 分享目录批量转换成 `.cas` 文件树和 manifest。
 
 ## 关键文件
 
@@ -50,6 +51,8 @@ drivers/115/cas.go
 drivers/189pc/cas_payload.go
 drivers/189pc/cas_restore.go
 drivers/189pc/cas_preview.go
+cmd/115share2cas/
+internal/share115cas/
 ```
 
 ## 驱动配置
@@ -101,6 +104,48 @@ cas_download_restore
 开启 `cas_download_restore` 后，通过 `/d/*.cas` 或 `/p/*.cas` 访问 `.cas` 时会临时恢复真实文件，拿到播放/下载链接后清理临时恢复文件。外部 STRM 已经指向 `.cas` URL 时，Emby 播放会走这个恢复流程。
 
 注意：115 的 `.cas` 当前只保存 SHA1 和 PreID。如果 115 秒传接口要求额外区间 SHA1 校验，`.cas` 本身没有原始文件字节，恢复会失败并返回明确错误。
+
+### 115 分享转 CAS 工具
+
+`cmd/115share2cas` 是离线辅助 CLI，不是 OpenList 服务运行必需组件。它用于把一个 115 分享目录转换成本地 `.cas` 文件树，并同时写出 `manifest.jsonl`，方便后续把 `.cas` 放进 OpenList 的 115 CAS 流程中使用。
+
+默认 `transfer-batch` 模式会把分享文件按批次转存到当前登录 115 账号的临时目录，读取文件 SHA1 / PreID 后生成 `.cas`，再删除临时目录并清理回收站。它适合直接下载分享文件受限、但账号可以接收分享的场景。
+
+示例：
+
+```bash
+go build -tags=jsoniter -o 115share2cas ./cmd/115share2cas
+
+./115share2cas \
+  --share-url 'https://115.com/s/xxxx?password=yyyy#' \
+  --cookie-file /path/to/115-cookie.txt \
+  --recycle-password-file /path/to/recycle-password.txt \
+  --out /path/to/115-share-cas \
+  --batch-size 1.5TiB \
+  --delay 3s \
+  --transfer-wait 10m \
+  --recycle-wait 3m
+```
+
+常用参数：
+
+```text
+--share-url                 115 分享链接，可自动解析分享码和提取码
+--cookie-file               已登录 115 Cookie，transfer-batch 模式必需
+--out                       输出 .cas 文件树目录
+--manifest                  manifest jsonl 路径，默认 [out]/manifest.jsonl
+--batch-size                每批接收分享文件的总大小上限
+--keep-temp                 保留临时转存目录，便于排查
+--recycle-password-file     115 回收站/安全密码文件，keep-temp=false 时必需
+--limit                     最多处理文件数，0 表示不限制
+--overwrite                 覆盖已存在的 .cas 文件
+```
+
+注意事项：
+
+- 工具会调用 115 分享接收、下载链接、删除和清理回收站接口；先用小分享和测试目录验证。
+- 不要把 Cookie、回收站密码、生成的 manifest 或 `.cas` 大目录提交进 git。
+- 如果任务正在运行，不要替换正在运行的二进制；先等任务结束或另起新路径测试。
 
 ### 139Yun
 
@@ -242,6 +287,7 @@ journalctl -u openlist-guangyapan -f
 cd /root/openlist-guangyapan-src
 go test -count=1 ./drivers/guangyapan
 go test -count=1 ./internal/casmeta ./drivers/139 ./drivers/189pc ./drivers/115 ./server/handles
+go test -count=1 ./internal/share115cas ./cmd/115share2cas
 ```
 
 构建二进制：
@@ -249,6 +295,7 @@ go test -count=1 ./internal/casmeta ./drivers/139 ./drivers/189pc ./drivers/115 
 ```bash
 cd /root/openlist-guangyapan-src
 go build -tags=jsoniter -o openlist-guangyapan .
+go build -tags=jsoniter -o 115share2cas ./cmd/115share2cas
 ```
 
 ## 5247 测试实例

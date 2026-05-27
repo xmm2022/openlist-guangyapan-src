@@ -41,6 +41,7 @@ func (d *Yun139) GetAddition() driver.Additional {
 }
 
 func (d *Yun139) Init(ctx context.Context) error {
+	d.applyCASRestorePCHeadersDefault()
 	if d.ref == nil {
 		if len(d.Authorization) == 0 {
 			if d.Username != "" && d.Password != "" {
@@ -680,6 +681,14 @@ func (d *Yun139) personalPartInfos(ctx context.Context, size int64) ([]PartInfo,
 }
 
 func (d *Yun139) personalCreateBySHA256(ctx context.Context, dstDir model.Obj, name string, size int64, fullHash string, fileRenameMode string) (*PersonalUploadResp, []PartInfo, error) {
+	return d.createBySHA256WithPost(ctx, dstDir, name, size, fullHash, fileRenameMode, d.personalPost)
+}
+
+func (d *Yun139) pcPersonalCreateBySHA256(ctx context.Context, dstDir model.Obj, name string, size int64, fullHash string, fileRenameMode string) (*PersonalUploadResp, []PartInfo, error) {
+	return d.createBySHA256WithPost(ctx, dstDir, name, size, fullHash, fileRenameMode, d.pcPersonalPost)
+}
+
+func (d *Yun139) createBySHA256WithPost(ctx context.Context, dstDir model.Obj, name string, size int64, fullHash string, fileRenameMode string, post func(string, interface{}, interface{}) ([]byte, error)) (*PersonalUploadResp, []PartInfo, error) {
 	if len(fullHash) != utils.SHA256.Width {
 		return nil, nil, fmt.Errorf("invalid sha256 hash for %s", name)
 	}
@@ -704,7 +713,7 @@ func (d *Yun139) personalCreateBySHA256(ctx context.Context, dstDir model.Obj, n
 		"fileRenameMode":       fileRenameMode,
 	}
 	var resp PersonalUploadResp
-	_, err = d.personalPost("/file/create", data, &resp)
+	_, err = post("/file/create", data, &resp)
 	return &resp, partInfos, err
 }
 

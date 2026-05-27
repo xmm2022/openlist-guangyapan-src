@@ -12,17 +12,18 @@ type Addition struct {
 	Password      string `json:"password" required:"true" secret:"true"`
 	MailCookies   string `json:"mail_cookies" required:"true" type:"text" help:"Cookies from mail.139.com used for login authentication."`
 	driver.RootID
-	Type                 string `json:"type" type:"select" options:"personal_new,family,group,personal" default:"personal_new"`
-	CloudID              string `json:"cloud_id"`
-	UserDomainID         string `json:"user_domain_id" help:"ud_id in Cookie, fill in to show disk usage"`
-	CustomUploadPartSize int64  `json:"custom_upload_part_size" type:"number" default:"0" help:"0 for auto"`
-	ReportRealSize       bool   `json:"report_real_size" type:"bool" default:"true" help:"Enable to report the real file size during upload"`
-	UseLargeThumbnail    bool   `json:"use_large_thumbnail" type:"bool" default:"false" help:"Enable to use large thumbnail for images"`
-	GenerateCAS          bool   `json:"generate_cas" help:"After upload, generate a same-name .cas file in the same directory"`
-	DeleteSource         bool   `json:"delete_source" help:"After generating the .cas file, delete the uploaded source file and clear recycle bin entry"`
-	RestoreSourceFromCAS bool   `json:"restore_source_from_cas" help:"Restore source file from .cas metadata"`
-	CASExtAllowlist      string `json:"cas_ext_allowlist" help:"CAS extension allowlist. Empty means all extensions are allowed. Example: mp4,mkv,iso,zip"`
-	CASDownloadRestore   bool   `json:"cas_download_restore" help:"When enabled, downloading .cas files via /d/* will restore and return the real file instead of raw CAS metadata"`
+	Type                   string `json:"type" type:"select" options:"personal_new,family,group,personal" default:"personal_new"`
+	CloudID                string `json:"cloud_id"`
+	UserDomainID           string `json:"user_domain_id" help:"ud_id in Cookie, fill in to show disk usage"`
+	CustomUploadPartSize   int64  `json:"custom_upload_part_size" type:"number" default:"0" help:"0 for auto"`
+	ReportRealSize         bool   `json:"report_real_size" type:"bool" default:"true" help:"Enable to report the real file size during upload"`
+	UseLargeThumbnail      bool   `json:"use_large_thumbnail" type:"bool" default:"false" help:"Enable to use large thumbnail for images"`
+	GenerateCAS            bool   `json:"generate_cas" help:"After upload, generate a same-name .cas file in the same directory"`
+	DeleteSource           bool   `json:"delete_source" help:"After generating the .cas file, delete the uploaded source file and clear recycle bin entry"`
+	RestoreSourceFromCAS   bool   `json:"restore_source_from_cas" help:"Restore source file from .cas metadata"`
+	CASRestoreUsePCHeaders bool   `json:"cas_restore_use_pc_headers" type:"bool" default:"true" help:"Use PC headers when restoring .cas files by SHA256. Enables rapid restore for files larger than 50GiB"`
+	CASExtAllowlist        string `json:"cas_ext_allowlist" help:"CAS extension allowlist. Empty means all extensions are allowed. Example: mp4,mkv,iso,zip"`
+	CASDownloadRestore     bool   `json:"cas_download_restore" help:"When enabled, downloading .cas files via /d/* will restore and return the real file instead of raw CAS metadata"`
 }
 
 var config = driver.Config{

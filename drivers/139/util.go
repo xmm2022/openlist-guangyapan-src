@@ -38,6 +38,11 @@ const (
 	KEY_HEX_2 = "7150714477323633586746674c337538"                 // 第二层 AES 解密密钥
 )
 
+const (
+	pcAppVersion = "8.7.2.20260519"
+	pcAppChannel = "10200153"
+)
+
 // do others that not defined in Driver interface
 func (d *Yun139) isFamily() bool {
 	return d.Type == "family"
@@ -494,24 +499,43 @@ func unicode(str string) string {
 	return textUnquoted
 }
 
-func (d *Yun139) personalRequest(pathname string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
-	url := d.getPersonalCloudHost() + pathname
-	req := base.RestyClient.R()
-	randStr := random.String(16)
-	ts := time.Now().Format("2006-01-02 15:04:05")
-	if callback != nil {
-		callback(req)
+func (d *Yun139) pcDeviceID() string {
+	sum := md5.Sum([]byte(d.getAccount()))
+	return "OPENLIST" + strings.ToUpper(hex.EncodeToString(sum[:8])) + "-PC"
+}
+
+func (d *Yun139) pcDeviceInfo() string {
+	return fmt.Sprintf(
+		"||11|%s|PC|QkYtMjAyMDAzMTAxNjQ3|%s|| Windows 10 (10.0)|1920X1040|Q2hpbmVzZSAoU2ltcGxpZmllZCk=|||",
+		pcAppVersion,
+		d.pcDeviceID(),
+	)
+}
+
+func (d *Yun139) pcPersonalHeaders(body string, ts string, randStr string, sign string, svcType string) map[string]string {
+	deviceInfo := d.pcDeviceInfo()
+	headers := d.personalHeaders(body, ts, randStr, sign, svcType)
+	headers["x-DeviceInfo"] = deviceInfo
+	headers["x-huawei-channelSrc"] = pcAppChannel
+	headers["x-MM-Source"] = "000"
+	headers["x-yun-api-version"] = "v1"
+	headers["x-yun-app-channel"] = pcAppChannel
+	headers["x-yun-client-info"] = deviceInfo
+	headers["x-yun-device-id"] = d.pcDeviceID()
+	headers["x-yun-device-info"] = deviceInfo
+	headers["x-yun-market-source"] = "000"
+	headers["x-yun-module-type"] = "100"
+	headers["x-yun-op-type"] = "1"
+	headers["x-yun-svc-type"] = "1"
+	if d.UserDomainID != "" {
+		headers["x-yun-uni"] = d.UserDomainID
 	}
-	body, err := utils.Json.Marshal(req.Body)
-	if err != nil {
-		return nil, err
-	}
-	sign := calSign(string(body), ts, randStr)
-	svcType := "1"
-	if d.isFamily() {
-		svcType = "2"
-	}
-	req.SetHeaders(map[string]string{
+	headers["x-ExpRoute-Code"] = fmt.Sprintf("routeCode=%s,type=2", d.getAccount())
+	return headers
+}
+
+func (d *Yun139) personalHeaders(body string, ts string, randStr string, sign string, svcType string) map[string]string {
+	return map[string]string{
 		"Accept":               "application/json, text/plain, */*",
 		"Authorization":        "Basic " + d.getAuthorization(),
 		"Caller":               "web",
@@ -533,7 +557,27 @@ func (d *Yun139) personalRequest(pathname string, method string, callback base.R
 		"X-Yun-Client-Info":    "||9|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||dW5kZWZpbmVk||",
 		"X-Yun-Module-Type":    "100",
 		"X-Yun-Svc-Type":       "1",
-	})
+	}
+}
+
+func (d *Yun139) personalRequestWithHeaders(pathname string, method string, callback base.ReqCallback, resp interface{}, headersFor func(body string, ts string, randStr string, sign string, svcType string) map[string]string) ([]byte, error) {
+	url := d.getPersonalCloudHost() + pathname
+	req := base.RestyClient.R()
+	randStr := random.String(16)
+	ts := time.Now().Format("2006-01-02 15:04:05")
+	if callback != nil {
+		callback(req)
+	}
+	body, err := utils.Json.Marshal(req.Body)
+	if err != nil {
+		return nil, err
+	}
+	sign := calSign(string(body), ts, randStr)
+	svcType := "1"
+	if d.isFamily() {
+		svcType = "2"
+	}
+	req.SetHeaders(headersFor(string(body), ts, randStr, sign, svcType))
 
 	var e BaseResp
 	req.SetResult(&e)
@@ -556,10 +600,20 @@ func (d *Yun139) personalRequest(pathname string, method string, callback base.R
 	return res.Body(), nil
 }
 
+func (d *Yun139) personalRequest(pathname string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
+	return d.personalRequestWithHeaders(pathname, method, callback, resp, d.personalHeaders)
+}
+
 func (d *Yun139) personalPost(pathname string, data interface{}, resp interface{}) ([]byte, error) {
 	return d.personalRequest(pathname, http.MethodPost, func(req *resty.Request) {
 		req.SetBody(data)
 	}, resp)
+}
+
+func (d *Yun139) pcPersonalPost(pathname string, data interface{}, resp interface{}) ([]byte, error) {
+	return d.personalRequestWithHeaders(pathname, http.MethodPost, func(req *resty.Request) {
+		req.SetBody(data)
+	}, resp, d.pcPersonalHeaders)
 }
 
 func (d *Yun139) isboPost(pathname string, data interface{}, resp interface{}) ([]byte, error) {

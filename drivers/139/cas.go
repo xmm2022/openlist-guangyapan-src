@@ -3,6 +3,7 @@ package _139
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -169,6 +170,48 @@ func resolveCASRestoreName(casName string, info *casUploadInfo) (string, error) 
 	return casmeta.ResolveRestoreName(casName, info)
 }
 
+func (d *Yun139) shouldRestoreCASWithPCHeaders() bool {
+	if d.CASRestoreUsePCHeaders {
+		return true
+	}
+	raw := strings.TrimSpace(d.Storage.Addition)
+	if raw == "" {
+		return true
+	}
+	var addition map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &addition); err != nil {
+		return true
+	}
+	value, ok := addition["cas_restore_use_pc_headers"]
+	if !ok {
+		return true
+	}
+	var enabled bool
+	if err := json.Unmarshal(value, &enabled); err != nil {
+		return true
+	}
+	return enabled
+}
+
+func (d *Yun139) applyCASRestorePCHeadersDefault() {
+	d.CASRestoreUsePCHeaders = d.shouldRestoreCASWithPCHeaders()
+}
+
+func (d *Yun139) createCASRestoreBySHA256(ctx context.Context, dstDir model.Obj, name string, size int64, fullHash string) (*PersonalUploadResp, error) {
+	if d.shouldRestoreCASWithPCHeaders() {
+		resp, _, err := d.pcPersonalCreateBySHA256(ctx, dstDir, name, size, fullHash, "auto_rename")
+		if err == nil {
+			return resp, nil
+		}
+		if utils.IsCanceled(ctx) {
+			return nil, err
+		}
+		utils.Log.Warnf("139yun: CAS restore PC headers create failed for %q, falling back to web headers: %v", name, err)
+	}
+	resp, _, err := d.personalCreateBySHA256(ctx, dstDir, name, size, fullHash, "auto_rename")
+	return resp, err
+}
+
 func (d *Yun139) restoreCAS(ctx context.Context, dstDir model.Obj, info *casUploadInfo, casName string, temp bool) (model.Obj, error) {
 	targetName, err := resolveCASRestoreName(casName, info)
 	if err != nil {
@@ -186,7 +229,7 @@ func (d *Yun139) restoreCAS(ctx context.Context, dstDir model.Obj, info *casUplo
 	if existing, err := d.findPersonalFileByName(ctx, targetName, dstDir.GetID()); err == nil && !temp {
 		return existing, nil
 	}
-	resp, _, err := d.personalCreateBySHA256(ctx, dstDir, targetName, info.Size, info.SHA256, "auto_rename")
+	resp, err := d.createCASRestoreBySHA256(ctx, dstDir, targetName, info.Size, info.SHA256)
 	if err != nil {
 		return nil, err
 	}

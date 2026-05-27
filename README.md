@@ -32,7 +32,10 @@
   - 可在上传真实文件后生成同名 `.cas`，并按配置删除源文件。
   - 访问 `.cas` 播放时临时恢复真实文件，获取真实播放链接后清理临时目录。
   - 支持通过 `/d/*.cas` 或 `/p/*.cas` 进入真实文件预览/Range 播放流程。
-- 新增 `115share2cas` 辅助工具，可把 115 分享目录批量转换成 `.cas` 文件树和 manifest。
+- 新增 CAS 离线辅助工具：
+  - `115share2cas`：把 115 分享目录批量转换成 `.cas` 文件树和 manifest。
+  - `tools/cas139/single_share_to_cas_batch.py`：139 单链接多文件转 `.cas`。
+  - `tools/cas139/multi_share_to_cas_batch.py`：139 多链接 manifest 调度，逐个调用单链接工具。
 
 ## 关键文件
 
@@ -53,6 +56,7 @@ drivers/189pc/cas_restore.go
 drivers/189pc/cas_preview.go
 cmd/115share2cas/
 internal/share115cas/
+tools/cas139/
 ```
 
 ## 驱动配置
@@ -146,6 +150,46 @@ go build -tags=jsoniter -o 115share2cas ./cmd/115share2cas
 - 工具会调用 115 分享接收、下载链接、删除和清理回收站接口；先用小分享和测试目录验证。
 - 不要把 Cookie、回收站密码、生成的 manifest 或 `.cas` 大目录提交进 git。
 - 如果任务正在运行，不要替换正在运行的二进制；先等任务结束或另起新路径测试。
+
+### 139 分享转 CAS 工具
+
+`tools/cas139` 是 139Yun CAS 的离线辅助工具目录，不是 OpenList 服务运行必需组件。它通过 139 PC 端接口把分享文件临时转存到当前账号目录，读取 SHA256 后生成 OpenList 可用的 `.cas`，再清理临时源文件。
+
+工具入口分两类：
+
+```text
+single_share_to_cas_batch.py   单链接多文件：一个 139 分享链接内包含多个文件
+multi_share_to_cas_batch.py    多链接批量：manifest 中包含多个 139 分享链接
+```
+
+单链接多文件示例：
+
+```bash
+python3 tools/cas139/single_share_to_cas_batch.py \
+  --share-id share-xxxx \
+  --files-json /path/to/139_share_files.json \
+  --db-path /opt/openlist/data/data.db \
+  --workers 3 \
+  --max-batch-size 60TiB \
+  --max-file-size 500GB \
+  --progress /path/to/139_share_cas_progress.json \
+  --retry-failed
+```
+
+多链接批量示例：
+
+```bash
+python3 tools/cas139/multi_share_to_cas_batch.py \
+  --manifest /path/to/cas139-shares.json \
+  --db-path /opt/openlist/data/data.db \
+  --progress-dir /path/to/progress \
+  --workers 3 \
+  --retry-failed
+```
+
+`multi_share_to_cas_batch.py` 只是调度器；每个分享仍由 `single_share_to_cas_batch.py` 独立处理，并使用独立 progress。详细 manifest 格式、参数和风险说明见 `tools/cas139/README.md`。
+
+注意：不要把分享列表 JSON、进度 JSON、日志、OpenList 数据库、Cookie 或生成的 `.cas` 输出目录提交进 git。
 
 ### 139Yun
 
@@ -288,6 +332,9 @@ cd /root/openlist-guangyapan-src
 go test -count=1 ./drivers/guangyapan
 go test -count=1 ./internal/casmeta ./drivers/139 ./drivers/189pc ./drivers/115 ./server/handles
 go test -count=1 ./internal/share115cas ./cmd/115share2cas
+python3 tools/cas139/test_single_share_to_cas_batch.py
+python3 tools/cas139/test_multi_share_to_cas_batch.py
+python3 -m py_compile tools/cas139/*.py
 ```
 
 构建二进制：

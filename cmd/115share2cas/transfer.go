@@ -375,10 +375,34 @@ func cleanupTempDir(ctx context.Context, opts transferOptions, tempCID, tempName
 	if len(recycleIDs) == 0 {
 		return fmt.Errorf("temp dir not found in recycle bin")
 	}
-	if err := opts.panClient.CleanRecycleBin(opts.recyclePassword, recycleIDs...); err != nil {
-		return fmt.Errorf("clean recycle bin ids %s: %w", strings.Join(recycleIDs, ","), err)
+	return cleanRecycleBinWithRetry(ctx, opts.panClient, opts.recyclePassword, recycleIDs, opts.recycleWait)
+}
+
+func cleanRecycleBinWithRetry(ctx context.Context, client *driver115.Pan115Client, password string, recycleIDs []string, maxWait time.Duration) error {
+	if len(recycleIDs) == 0 {
+		return fmt.Errorf("missing recycle ids")
 	}
-	return nil
+	deadline := time.Now().Add(maxWait)
+	var lastErr error
+	for {
+		err := client.CleanRecycleBin(password, recycleIDs...)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if maxWait <= 0 || time.Now().After(deadline) {
+			break
+		}
+		log.Printf("clean recycle bin ids %s failed, retrying: %v", strings.Join(recycleIDs, ","), err)
+		timer := time.NewTimer(10 * time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return fmt.Errorf("clean recycle bin ids %s: %w", strings.Join(recycleIDs, ","), lastErr)
 }
 
 func waitForRecycleIDs(ctx context.Context, client *driver115.Pan115Client, tempCID, tempName string, maxWait time.Duration) ([]string, error) {

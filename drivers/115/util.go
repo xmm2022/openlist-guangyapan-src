@@ -128,6 +128,9 @@ func (d *Pan115) rapidUpload(fileSize int64, fileName, dirID, preID, fileID stri
 	if ecdhCipher, err = cipher.NewEcdhCipher(); err != nil {
 		return nil, err
 	}
+	if ok, err := d.client.UploadAvailable(); !ok || err != nil {
+		return nil, err
+	}
 
 	userID := strconv.FormatInt(d.client.UserID, 10)
 	form := url.Values{}
@@ -179,7 +182,8 @@ func (d *Pan115) rapidUpload(fileSize int64, fileName, dirID, preID, fileID stri
 		if decrypted, err = ecdhCipher.Decrypt(bodyBytes); err != nil {
 			return nil, err
 		}
-		if err = driver115.CheckErr(json.Unmarshal(decrypted, &result), &result, resp); err != nil {
+		result = driver115.UploadInitResp{}
+		if err = json.Unmarshal(decrypted, &result); err != nil {
 			return nil, err
 		}
 		if result.Status == 7 {
@@ -190,6 +194,9 @@ func (d *Pan115) rapidUpload(fileSize int64, fileName, dirID, preID, fileID stri
 				return nil, err
 			}
 		} else {
+			if err = driver115.CheckErr(nil, &result, resp); err != nil {
+				return nil, err
+			}
 			retry = false
 		}
 		result.SHA1 = fileID

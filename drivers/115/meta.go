@@ -16,6 +16,7 @@ type Addition struct {
 	RestoreSourceFromCAS bool    `json:"restore_source_from_cas" help:"Restore source file from .cas metadata"`
 	CASExtAllowlist      string  `json:"cas_ext_allowlist" help:"CAS extension allowlist. Empty means all extensions are allowed. Example: mp4,mkv,iso,zip"`
 	CASDownloadRestore   bool    `json:"cas_download_restore" help:"When enabled, downloading .cas files via /d/* will restore and return the real file instead of raw CAS metadata"`
+	CASRecyclePassword   string  `json:"cas_recycle_password" secret:"true" help:"Recycle-bin password used to clean temporary CAS restore source files"`
 	driver.RootID
 }
 

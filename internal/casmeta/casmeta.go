@@ -31,18 +31,30 @@ type Info struct {
 	SHA1     string
 	PreID    string
 	SHA256   string
+	Source   *Source
+}
+
+type Source struct {
+	Type        string `json:"type,omitempty"`
+	ShareCode   string `json:"share_code,omitempty"`
+	ReceiveCode string `json:"receive_code,omitempty"`
+	FileID      string `json:"file_id,omitempty"`
+	RawURL      string `json:"raw_url,omitempty"`
+	OpenList    string `json:"openlist,omitempty"`
+	Path        string `json:"path,omitempty"`
 }
 
 type Payload struct {
-	Provider   string `json:"provider,omitempty"`
-	Name       string `json:"name"`
-	Size       int64  `json:"size"`
-	MD5        string `json:"md5"`
-	SliceMD5   string `json:"sliceMd5"`
-	SHA1       string `json:"sha1,omitempty"`
-	PreID      string `json:"preID,omitempty"`
-	SHA256     string `json:"sha256,omitempty"`
-	CreateTime string `json:"create_time"`
+	Provider   string  `json:"provider,omitempty"`
+	Name       string  `json:"name"`
+	Size       int64   `json:"size"`
+	MD5        string  `json:"md5"`
+	SliceMD5   string  `json:"sliceMd5"`
+	SHA1       string  `json:"sha1,omitempty"`
+	PreID      string  `json:"preID,omitempty"`
+	SHA256     string  `json:"sha256,omitempty"`
+	Source     *Source `json:"source,omitempty"`
+	CreateTime string  `json:"create_time"`
 }
 
 func IsName(name string) bool {
@@ -126,6 +138,7 @@ func Encode(info *Info) ([]byte, error) {
 		SHA1:       info.SHA1,
 		PreID:      info.PreID,
 		SHA256:     info.SHA256,
+		Source:     info.Source,
 		CreateTime: strconv.FormatInt(time.Now().Unix(), 10),
 	})
 	if err != nil {
@@ -162,6 +175,7 @@ func Decode(data []byte) (*Info, error) {
 		SHA1:     payload.SHA1,
 		PreID:    payload.PreID,
 		SHA256:   payload.SHA256,
+		Source:   payload.Source,
 	}, nil
 }
 
